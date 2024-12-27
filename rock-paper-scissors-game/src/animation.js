@@ -16,5 +16,3 @@ function animateComputerChoice() {
         }, 2000);
     });
 }
-
-export { animateComputerChoice };
