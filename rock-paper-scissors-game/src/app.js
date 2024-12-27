@@ -1,7 +1,7 @@
 // This file contains the main JavaScript code for the rock-paper-scissors game.
 // It initializes the game, handles user interactions, and manages game logic.
 
-import { startWebcam, detectChoice } from './webcam.js';
+import { startWebcam, detectChoice, detectHandGesture } from './webcam.js';
 import { animateComputerChoice } from './animation.js';
 import { getRandomChoice, displayResult } from './utils/helpers.js';
 
@@ -17,15 +17,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const countdownElement = document.getElementById('countdown');
 
     startGameButton.addEventListener('click', async () => {
-        console.log("Game started");
+        console.log("Start Game button clicked");
         await countdown();
+        console.log("Countdown finished");
+
         const userChoice = await detectHandGesture();
+        console.log("User choice detected:", userChoice);
         userChoiceElement.innerText = userChoice;
 
         const computerChoice = await animateComputerChoice();
+        console.log("Computer choice animated:", computerChoice);
+
         const result = determineWinner(userChoice, computerChoice);
+        console.log("Game result determined:", result);
         resultElement.innerText = `Result: ${result}`;
-        console.log("Game result: ", result);
     });
 });
 
@@ -71,6 +76,7 @@ async function countdown() {
     const steps = ['Rock', 'Paper', 'Scissors', 'Shoot'];
     for (let i = 0; i < steps.length; i++) {
         countdownElement.innerText = steps[i];
+        console.log("Countdown step:", steps[i]);
         await new Promise(resolve => setTimeout(resolve, 1000));
     }
     countdownElement.innerText = '';

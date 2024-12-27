@@ -11,7 +11,8 @@ navigator.mediaDevices.getUserMedia({ video: true })
         console.error("Error accessing webcam: ", err);
     });
 
-async function detectHandGesture() {
+export async function detectHandGesture() {
+    const video = document.getElementById('webcam');
     const model = await handpose.load();
     console.log("Handpose model loaded");
 
@@ -21,6 +22,7 @@ async function detectHandGesture() {
         console.log("Hand landmarks: ", landmarks);
         return classifyGesture(landmarks);
     } else {
+        console.log("No hand detected");
         return 'No hand detected';
     }
 }
