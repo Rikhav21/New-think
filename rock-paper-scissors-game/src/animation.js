@@ -1,4 +1,4 @@
-export function animateComputerChoice() {
+function animateComputerChoice() {
     const choices = ['Rock', 'Paper', 'Scissors'];
     let index = 0;
     const interval = setInterval(() => {
@@ -17,3 +17,6 @@ export function animateComputerChoice() {
         }, 2000);
     });
 }
+
+// Make the function available globally
+window.animateComputerChoice = animateComputerChoice;

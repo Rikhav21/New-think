@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log("User choice detected:", userChoice);
         userChoiceElement.innerText = userChoice;
 
-        const computerChoice = await animateComputerChoice();
+        const computerChoice = await window.animateComputerChoice();
         console.log("Computer choice animated:", computerChoice);
 
         const result = determineWinner(userChoice, computerChoice);
@@ -52,3 +52,6 @@ function determineWinner(userChoice, computerChoice) {
         return 'You Win';
     }
 }
+
+// Make the function available globally
+window.detectHandGesture = detectHandGesture;
