@@ -2,9 +2,8 @@ import { Hands } from '@mediapipe/hands';
 import { Camera } from '@mediapipe/camera_utils';
 
 const video = document.getElementById('webcam');
-const canvas = document.createElement('canvas');
+const canvas = document.getElementById('output-canvas');
 const context = canvas.getContext('2d');
-document.body.appendChild(canvas);
 
 navigator.mediaDevices.getUserMedia({ video: true })
     .then(stream => {
