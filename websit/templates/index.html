@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rock Paper Scissors</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        video {
+            border: 1px solid #ccc;
+            border-radius: 10px;
+        }
+        button {
+            margin: 10px;
+        }
+        #countdown {
+            font-size: 2em;
+            margin: 20px;
+        }
+        #result {
+            font-size: 1.5em;
+            margin: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Rock Paper Scissors</h1>
+    <video id="webcam" autoplay></video>
+    <div id="countdown"></div>
+    <button id="start-game">Start Game</button>
+    <div id="result"></div>
+    <div id="score">User: 0 | Computer: 0</div>
+    <script>
+        const video = document.getElementById('webcam');
+        const countdownDiv = document.getElementById('countdown');
+        const resultDiv = document.getElementById('result');
+        const scoreDiv = document.getElementById('score');
+        let hands;
+        let model;
+        let userScore = 0;
+        let computerScore = 0;
+
+        async function loadModel() {
+            model = await tf.loadLayersModel('web_model/model.json');
+            console.log("Model loaded");
+        }
+
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+                console.log("Webcam stream started");
+            })
+            .catch(err => {
+                console.error("Error accessing webcam: ", err);
+            });
+
+        function onResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0].map(lm => [lm.x, lm.y, lm.z]).flat();
+                classifyGesture(landmarks);
+            }
+        }
+
+        async function classifyGesture(landmarks) {
+            const data = tf.tensor([landmarks]);
+            const prediction = model.predict(data);
+            const gestureId = (await prediction.array())[0].indexOf(Math.max(...(await prediction.array())[0]));
+            const gestures = ['rock', 'paper', 'scissors'];
+            const userGesture = gestures[gestureId];
+
+            fetch('/classify', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ landmarks: landmarks })
+            })
+            .then(response => response.json())
+            .then(data => {
+                resultDiv.innerText = `You: ${data.user_gesture} | Computer: ${data.computer_gesture} | Result: ${data.result}`;
+                userScore = data.user_score;
+                computerScore = data.computer_score;
+                scoreDiv.innerText = `User: ${userScore} | Computer: ${computerScore}`;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        }
+
+        function startCountdown() {
+            const countdownTexts = ["Rock", "Paper", "Scissors"];
+            let countdownIndex = 0;
+            countdownDiv.innerText = countdownTexts[countdownIndex];
+            const interval = setInterval(() => {
+                countdownIndex++;
+                if (countdownIndex < countdownTexts.length) {
+                    countdownDiv.innerText = countdownTexts[countdownIndex];
+                } else if (countdownIndex === countdownTexts.length) {
+                    countdownDiv.innerText = "Shoot!";
+                } else {
+                    clearInterval(interval);
+                    countdownDiv.innerText = "";
+                    hands.onResults(onResults);
+                    setTimeout(() => {
+                        hands.onResults(() => {});
+                    }, 1000);
+                }
+            }, 1000);
+        }
+
+        document.getElementById('start-game').addEventListener('click', () => {
+            hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            const camera = new Camera(video, {
+                onFrame: async () => {
+                    await hands.send({ image: video });
+                },
+                width: 640,
+                height: 480
+            });
+            camera.start();
+
+            startCountdown();
+        });
+
+        loadModel();
+    </script>
+</body>
+</html>
