@@ -7,6 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
     <style>
         body {
             display: flex;
@@ -41,6 +42,11 @@
     <button id="start-game">Start Game</button>
     <div id="result"></div>
     <div id="score">User: 0 | Computer: 0</div>
+    <form id="gesture-form">
+        <label for="landmarks">Enter landmarks (comma-separated):</label>
+        <input type="text" id="landmarks" name="landmarks">
+        <button type="button" onclick="submitForm()">Submit</button>
+    </form>
     <script>
         const video = document.getElementById('webcam');
         const countdownDiv = document.getElementById('countdown');
@@ -50,9 +56,10 @@
         let model;
         let userScore = 0;
         let computerScore = 0;
+        let classifyAfterShoot = false;
 
         async function loadModel() {
-            model = await tf.loadLayersModel('web_model/model.json');
+            model = await tf.loadLayersModel('/web_model/model.json');
             console.log("Model loaded");
         }
 
@@ -68,7 +75,20 @@
         function onResults(results) {
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0].map(lm => [lm.x, lm.y, lm.z]).flat();
-                classifyGesture(landmarks);
+
+                // Draw hand landmarks
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                mp_drawing.drawLandmarks(ctx, results.multiHandLandmarks[0], mp_hands.HAND_CONNECTIONS);
+                video.srcObject = canvas.captureStream();
+
+                if (classifyAfterShoot) {
+                    classifyGesture(landmarks);
+                    classifyAfterShoot = false;
+                }
             }
         }
 
@@ -79,23 +99,28 @@
             const gestures = ['rock', 'paper', 'scissors'];
             const userGesture = gestures[gestureId];
 
-            fetch('/classify', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ landmarks: landmarks })
-            })
-            .then(response => response.json())
-            .then(data => {
-                resultDiv.innerText = `You: ${data.user_gesture} | Computer: ${data.computer_gesture} | Result: ${data.result}`;
-                userScore = data.user_score;
-                computerScore = data.computer_score;
-                scoreDiv.innerText = `User: ${userScore} | Computer: ${computerScore}`;
-            })
-            .catch(error => {
-                console.error('Error:', error);
-            });
+            // Randomly select a gesture for the computer
+            const computerGesture = gestures[Math.floor(Math.random() * gestures.length)];
+
+            // Determine the result
+            let result;
+            if (userGesture === computerGesture) {
+                result = 'tie';
+            } else if (
+                (userGesture === 'rock' && computerGesture === 'scissors') ||
+                (userGesture === 'paper' && computerGesture === 'rock') ||
+                (userGesture === 'scissors' && computerGesture === 'paper')
+            ) {
+                result = 'win';
+                userScore++;
+            } else {
+                result = 'lose';
+                computerScore++;
+            }
+
+            // Display the result
+            resultDiv.innerText = `You: ${userGesture} | Computer: ${computerGesture} | Result: ${result}`;
+            scoreDiv.innerText = `User: ${userScore} | Computer: ${computerScore}`;
         }
 
         function startCountdown() {
@@ -111,9 +136,9 @@
                 } else {
                     clearInterval(interval);
                     countdownDiv.innerText = "";
-                    hands.onResults(onResults);
+                    classifyAfterShoot = true;
                     setTimeout(() => {
-                        hands.onResults(() => {});
+                        hands.onResults(onResults);
                     }, 1000);
                 }
             }, 1000);
@@ -144,6 +169,21 @@
         });
 
         loadModel();
+
+        function submitForm() {
+            const landmarks = document.getElementById('landmarks').value.split(',').map(Number);
+            fetch('/classify', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ landmarks })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('result').innerText = `You: ${data.user_gesture} | Computer: ${data.computer_gesture} | Result: ${data.result}`;
+            });
+        }
     </script>
 </body>
 </html>
