@@ -3,11 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rock Paper Scissors</title>
+    <title>Hand Gesture Classification</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
     <style>
         body {
             display: flex;
@@ -18,172 +17,74 @@
             margin: 0;
             font-family: Arial, sans-serif;
         }
-        video {
+        video, canvas {
             border: 1px solid #ccc;
             border-radius: 10px;
+            width: 640px;
+            height: 480px;
         }
-        button {
-            margin: 10px;
-        }
-        #countdown {
-            font-size: 2em;
-            margin: 20px;
-        }
-        #result {
-            font-size: 1.5em;
-            margin: 20px;
+        h1 {
+            margin-bottom: 20px;
         }
     </style>
 </head>
 <body>
-    <h1>Rock Paper Scissors</h1>
-    <video id="webcam" autoplay></video>
-    <div id="countdown"></div>
-    <button id="start-game">Start Game</button>
-    <div id="result"></div>
-    <div id="score">User: 0 | Computer: 0</div>
-    <form id="gesture-form">
-        <label for="landmarks">Enter landmarks (comma-separated):</label>
-        <input type="text" id="landmarks" name="landmarks">
-        <button type="button" onclick="submitForm()">Submit</button>
-    </form>
+    <h1>Hand Gesture Classification</h1>
+    <img src="{{ url_for('video_feed') }}" width="800" height="600">
+    <video id="input-video" autoplay></video>
+    <canvas id="output-canvas"></canvas>
     <script>
-        const video = document.getElementById('webcam');
-        const countdownDiv = document.getElementById('countdown');
-        const resultDiv = document.getElementById('result');
-        const scoreDiv = document.getElementById('score');
-        let hands;
-        let model;
-        let userScore = 0;
-        let computerScore = 0;
-        let classifyAfterShoot = false;
+        const videoElement = document.getElementById('input-video');
+        const canvasElement = document.getElementById('output-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
 
         async function loadModel() {
-            model = await tf.loadLayersModel('/web_model/model.json');
-            console.log("Model loaded");
+            const model = await tf.loadGraphModel('/web_model/model.json');
+            console.log("Model loaded successfully:", model);
+            return model;
         }
 
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => {
-                video.srcObject = stream;
-                console.log("Webcam stream started");
-            })
-            .catch(err => {
-                console.error("Error accessing webcam: ", err);
-            });
+        async function main() {
+            const model = await loadModel();
 
-        function onResults(results) {
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0].map(lm => [lm.x, lm.y, lm.z]).flat();
-
-                // Draw hand landmarks
-                const canvas = document.createElement('canvas');
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                mp_drawing.drawLandmarks(ctx, results.multiHandLandmarks[0], mp_hands.HAND_CONNECTIONS);
-                video.srcObject = canvas.captureStream();
-
-                if (classifyAfterShoot) {
-                    classifyGesture(landmarks);
-                    classifyAfterShoot = false;
-                }
-            }
-        }
-
-        async function classifyGesture(landmarks) {
-            const data = tf.tensor([landmarks]);
-            const prediction = model.predict(data);
-            const gestureId = (await prediction.array())[0].indexOf(Math.max(...(await prediction.array())[0]));
-            const gestures = ['rock', 'paper', 'scissors'];
-            const userGesture = gestures[gestureId];
-
-            // Randomly select a gesture for the computer
-            const computerGesture = gestures[Math.floor(Math.random() * gestures.length)];
-
-            // Determine the result
-            let result;
-            if (userGesture === computerGesture) {
-                result = 'tie';
-            } else if (
-                (userGesture === 'rock' && computerGesture === 'scissors') ||
-                (userGesture === 'paper' && computerGesture === 'rock') ||
-                (userGesture === 'scissors' && computerGesture === 'paper')
-            ) {
-                result = 'win';
-                userScore++;
-            } else {
-                result = 'lose';
-                computerScore++;
-            }
-
-            // Display the result
-            resultDiv.innerText = `You: ${userGesture} | Computer: ${computerGesture} | Result: ${result}`;
-            scoreDiv.innerText = `User: ${userScore} | Computer: ${computerScore}`;
-        }
-
-        function startCountdown() {
-            const countdownTexts = ["Rock", "Paper", "Scissors"];
-            let countdownIndex = 0;
-            countdownDiv.innerText = countdownTexts[countdownIndex];
-            const interval = setInterval(() => {
-                countdownIndex++;
-                if (countdownIndex < countdownTexts.length) {
-                    countdownDiv.innerText = countdownTexts[countdownIndex];
-                } else if (countdownIndex === countdownTexts.length) {
-                    countdownDiv.innerText = "Shoot!";
-                } else {
-                    clearInterval(interval);
-                    countdownDiv.innerText = "";
-                    classifyAfterShoot = true;
-                    setTimeout(() => {
-                        hands.onResults(onResults);
-                    }, 1000);
-                }
-            }, 1000);
-        }
-
-        document.getElementById('start-game').addEventListener('click', () => {
-            hands = new Hands({
+            const hands = new Hands({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
 
             hands.setOptions({
                 maxNumHands: 1,
-                modelComplexity: 1,
                 minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
+                minTrackingConfidence: 0.5,
             });
 
-            const camera = new Camera(video, {
+            hands.onResults((results) => {
+                canvasCtx.save();
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+                canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+                if (results.multiHandLandmarks) {
+                    for (const landmarks of results.multiHandLandmarks) {
+                        Hands.drawConnectors(canvasCtx, landmarks, Hands.HAND_CONNECTIONS, 
+                            {color: '#00FF00', lineWidth: 5});
+                        Hands.drawLandmarks(canvasCtx, landmarks, 
+                            {color: '#FF0000', lineWidth: 2});
+                    }
+                }
+                canvasCtx.restore();
+            });
+
+            const camera = new Camera(videoElement, {
                 onFrame: async () => {
-                    await hands.send({ image: video });
+                    await hands.send({image: videoElement});
                 },
                 width: 640,
-                height: 480
+                height: 480,
             });
+
             camera.start();
-
-            startCountdown();
-        });
-
-        loadModel();
-
-        function submitForm() {
-            const landmarks = document.getElementById('landmarks').value.split(',').map(Number);
-            fetch('/classify', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ landmarks })
-            })
-            .then(response => response.json())
-            .then(data => {
-                document.getElementById('result').innerText = `You: ${data.user_gesture} | Computer: ${data.computer_gesture} | Result: ${data.result}`;
-            });
         }
+
+        main().catch(err => console.error("Error initializing app:", err));
     </script>
 </body>
 </html>

@@ -1,21 +1,39 @@
-import cv2
-import mediapipe as mp
-import json
-import os
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, Response
 import numpy as np
 import tensorflow as tf
+import cv2
+import mediapipe as mp
+import os
+import json
+
 app = Flask(__name__)
-model = tf.keras.models.load_model('gesture_model.h5')
+
+# Load the trained model
+model = tf.keras.models.load_model('C:/rikhav_project/New-think/websit/ta.h5')
 gestures = ['rock', 'paper', 'scissors']
+
+# Initialize MediaPipe Hands
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5, min_tracking_confidence=0.5)
 mp_drawing = mp.solutions.drawing_utils
-user_score = 0
-computer_score = 0
+
+# Ensure directories exist
 os.makedirs("rock", exist_ok=True)
 os.makedirs("paper", exist_ok=True)
 os.makedirs("scissors", exist_ok=True)
+
+# Initialize score
+user_score = 0
+computer_score = 0
+
+# Function to classify hand gesture
+def classify_gesture(landmarks):
+    data = np.array([landmarks])
+    prediction = model.predict(data)
+    gesture_id = np.argmax(prediction)
+    return gestures[gesture_id]
+
+# Function to save landmarks
 def save_landmarks(gesture, landmarks):
     data = {
         "gesture": gesture,
@@ -24,72 +42,39 @@ def save_landmarks(gesture, landmarks):
     filename = os.path.join(gesture, f"{gesture}_landmarks_{len(os.listdir(gesture)) + 1}.json")
     with open(filename, 'w') as f:
         json.dump(data, f)
-    print(f"Saved {gesture} landmarks to {filename}")
-def classify_gesture(landmarks):
-    data = np.array([landmarks])
-    prediction = model.predict(data)
-    gesture_id = np.argmax(prediction)
-    return gestures[gesture_id]
+
 @app.route('/')
 def index():
     return render_template('index.html')
-@app.route('/classify', methods=['POST'])
-def classify():
-    global user_score, computer_score
-    data = request.json
-    landmarks = data['landmarks']
-    user_gesture = classify_gesture(landmarks)
-    computer_gesture = np.random.choice(gestures)
-    
-    if user_gesture == computer_gesture:
-        result = 'tie'
-    elif (user_gesture == 'rock' and computer_gesture == 'scissors') or \
-         (user_gesture == 'paper' and computer_gesture == 'rock') or \
-         (user_gesture == 'scissors' and computer_gesture == 'paper'):
-        result = 'win'
-        user_score += 1
-    else:
-        result = 'lose'
-        computer_score += 1
-    return jsonify({
-        'user_gesture': user_gesture,
-        'computer_gesture': computer_gesture,
-        'result': result,
-        'user_score': user_score,
-        'computer_score': computer_score
-    })
-def capture_hand_landmarks():
+
+def generate_frames():
     cap = cv2.VideoCapture(0)
-    current_gesture = None
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
+    while True:
+        success, frame = cap.read()
+        if not success:
             break
-        frame = cv2.flip(frame, 1)
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = hands.process(frame_rgb)
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-                landmarks = [{"x": lm.x, "y": lm.y, "z": lm.z} for lm in hand_landmarks.landmark]
-                if current_gesture:
-                    save_landmarks(current_gesture, landmarks)
-                    current_gesture = None
-        cv2.imshow('Hand Gesture Capture', frame)
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('r'):
-            current_gesture = 'rock'
-            print("Capturing Rock gesture")
-        elif key == ord('p'):
-            current_gesture = 'paper'
-            print("Capturing Paper gesture")
-        elif key == ord('s'):
-            current_gesture = 'scissors'
-            print("Capturing Scissors gesture")
-        elif key == ord('q'):
-            break
-    cap.release()
-    cv2.destroyAllWindows()
+        else:
+            # Convert the BGR image to RGB
+            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = hands.process(image)
+
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                    landmarks = [lm for lm in hand_landmarks.landmark]
+                    landmarks = np.array([[lm.x, lm.y, lm.z] for lm in landmarks]).flatten()
+                    gesture = classify_gesture(landmarks)
+                    save_landmarks(gesture, landmarks)
+                    cv2.putText(frame, gesture, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+@app.route('/video_feed')
+def video_feed():
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
 if __name__ == "__main__":
-    app.run(debug=True)
-    capture_hand_landmarks()
+    app.run(debug=True, port=5001)
