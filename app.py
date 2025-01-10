@@ -1,10 +1,12 @@
-import cv2
-import mediapipe as mp
-import numpy as np
-import tensorflow as tf
-import time
+import os
 import random
-from flask import Flask, render_template_string, Response, request, jsonify
+import base64
+import cv2
+import numpy as np
+from flask import Flask, render_template_string, jsonify, request, Response
+import tensorflow as tf
+import mediapipe as mp
+import time
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -45,62 +47,6 @@ def determine_winner(user_choice, computer_choice):
     else:
         computer_wins += 1
         return "Computer wins!"
-
-def generate_frames():
-    """Generate video frames for webcam and process hand gestures."""
-    global detecting, countdown_start, final_result, computer_choice
-    cap = cv2.VideoCapture(0)
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        # Flip and convert frame to RGB
-        frame = cv2.flip(frame, 1)
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        # Handle countdown and detection
-        if detecting:
-            elapsed_time = time.time() - countdown_start
-            remaining_time = max(0, 3 - int(elapsed_time))  # 3-second countdown
-            if remaining_time > 0:
-                # Display countdown on the video feed
-                cv2.putText(frame, f"Get Ready: {remaining_time}", (150, 200), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 255), 4, cv2.LINE_AA)
-            elif elapsed_time < 4:  # Detection phase for 1 second
-                results = hands.process(frame_rgb)
-                if results.multi_hand_landmarks:
-                    for hand_landmarks in results.multi_hand_landmarks:
-                        mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-                        landmarks = [lm.x for lm in hand_landmarks.landmark] + \
-                                    [lm.y for lm in hand_landmarks.landmark] + \
-                                    [lm.z for lm in hand_landmarks.landmark]
-                        final_result = classify(landmarks)
-                        cv2.putText(frame, f"Detected: {final_result}", (10, 50), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
-            else:
-                # Stop detection, generate computer choice, and determine the winner
-                detecting = False
-                computer_choice = random.choice(gestures)
-                determine_winner(final_result, computer_choice)
-
-        # If not detecting, show the result
-        if not detecting and final_result:
-            cv2.putText(frame, f"Your Gesture: {final_result}", (10, 50), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
-            cv2.putText(frame, f"Computer: {computer_choice}", (10, 100), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2, cv2.LINE_AA)
-
-        # Encode frame for streaming
-        _, buffer = cv2.imencode('.jpg', frame)
-        frame = buffer.tobytes()
-
-        # Yield frame for live stream
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-
-    cap.release()
-    cv2.destroyAllWindows()
 
 @app.route('/')
 def index():
@@ -148,10 +94,27 @@ def index():
             button:hover {
                 background: #005a9e;
             }
+            video {
+                border: 1px solid #ccc;
+                border-radius: 10px;
+                width: 640px;
+                height: 480px;
+            }
         </style>
         <script>
-            function startGame() {
-                fetch('/start', { method: 'POST' }).then(() => {
+            let videoStream;
+            let intervalId;
+
+            async function startGame() {
+                try {
+                    videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    const videoElement = document.getElementById('video');
+                    videoElement.srcObject = videoStream;
+                    videoElement.play();
+
+                    // Capture frames and send to server for processing
+                    intervalId = setInterval(captureFrame, 1000);
+
                     // Poll for scores and update them dynamically
                     setInterval(() => {
                         fetch('/scores')
@@ -161,6 +124,35 @@ def index():
                             document.getElementById('computerScore').textContent = data.computer_wins;
                         });
                     }, 1000);
+                } catch (error) {
+                    console.error('Error accessing webcam:', error);
+                }
+            }
+
+            function captureFrame() {
+                const videoElement = document.getElementById('video');
+                const canvas = document.createElement('canvas');
+                canvas.width = videoElement.videoWidth;
+                canvas.height = videoElement.videoHeight;
+                const context = canvas.getContext('2d');
+                context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                const frame = canvas.toDataURL('image/jpeg');
+
+                fetch('/process_frame', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ frame: frame })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.result) {
+                        document.getElementById('result').textContent = `Detected: ${data.result}`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error processing frame:', error);
                 });
             }
         </script>
@@ -179,8 +171,9 @@ def index():
         </div>
         <button onclick="startGame()">Start Game</button>
         <div class="video-container">
-            <img src="/video_feed" width="640" height="480">
+            <video id="video" autoplay></video>
         </div>
+        <div id="result"></div>
     </body>
     </html>
     """
@@ -201,10 +194,33 @@ def get_scores():
     """Return the current scores as JSON."""
     return jsonify({'user_wins': user_wins, 'computer_wins': computer_wins})
 
-@app.route('/video_feed')
-def video_feed():
-    """Video feed route for live webcam stream."""
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+@app.route('/process_frame', methods=['POST'])
+def process_frame():
+    """Process the frame sent from the client."""
+    data = request.json
+    frame_data = data['frame'].split(',')[1]
+    frame = np.frombuffer(base64.b64decode(frame_data), dtype=np.uint8)
+    
+    if frame.size == 0:
+        return jsonify({'result': None, 'error': 'Empty frame data'})
+
+    frame = cv2.imdecode(frame, cv2.IMREAD_COLOR)
+    
+    if frame is None:
+        return jsonify({'result': None, 'error': 'Failed to decode frame'})
+
+    # Process the frame with Mediapipe and classify the gesture
+    results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            landmarks = [lm.x for lm in hand_landmarks.landmark] + \
+                        [lm.y for lm in hand_landmarks.landmark] + \
+                        [lm.z for lm in hand_landmarks.landmark]
+            final_result = classify(landmarks)
+            return jsonify({'result': final_result})
+
+    return jsonify({'result': None})
 
 if __name__ == "__main__":
     app.run(debug=True, port=6123)
